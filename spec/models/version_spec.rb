@@ -1,24 +1,111 @@
 require "rails_helper"
 
 module PaperTrail
-  describe Version, type: :model do
-    describe "object_changes column", versioning: true do
-      let(:widget) { Widget.create!(name: "Dashboard") }
-      let(:value) { widget.versions.last.object_changes }
+  describe Version, type: :model, versioning: true do
+    describe ".creates" do
+      it "returns only create events" do
+        Animal.create
+        Version.creates.each { |version| expect(version.event).to(eq("create")) }
+      end
+    end
 
-      context "serializer is YAML" do
-        specify { expect(PaperTrail.serializer).to be PaperTrail::Serializers::YAML }
+    describe ".updates" do
+      it "returns only update events" do
+        animal = Animal.create
+        animal.update_attributes(name: "Animal")
+        expect(Version.updates.present?).to(eq(true))
+        Version.updates.each { |version| expect(version.event).to(eq("update")) }
+      end
+    end
 
-        it "store out as a plain hash" do
-          expect(value =~ /HashWithIndifferentAccess/).to be_nil
+    describe ".destroys" do
+      it "returns only destroy events" do
+        animal = Animal.create
+        animal.destroy
+        expect(Version.destroys.present?).to(eq(true))
+        Version.destroys.each { |version| expect(version.event).to(eq("destroy")) }
+      end
+    end
+
+    describe ".not_creates" do
+      it("return all versions except create events") do
+        animal = Animal.create
+        animal.update_attributes(name: "Animal")
+        animal.destroy
+        expect(Version.not_creates.present?).to(eq(true))
+        Version.not_creates.each do |version|
+          expect(version.event).not_to(eq("create"))
+        end
+      end
+    end
+
+    describe ".subsequent" do
+      context("given a timestamp") do
+        it("return all versions that were created after the timestamp") do
+          animal = Animal.create
+          2.times { animal.update_attributes(name: FFaker::Lorem.word) }
+          value = Version.subsequent(1.hour.ago, true)
+          expect(value).to(eq(animal.versions.to_a))
+          expect(value.to_sql).to(match(/ORDER BY #{Version.arel_table[:created_at].asc.to_sql}/))
         end
       end
 
-      context "serializer is JSON" do
+      context("given a Version") do
+        it("grab the timestamp from the version and use that as the value") do
+          animal = Animal.create
+          2.times { animal.update_attributes(name: FFaker::Lorem.word) }
+          expected = animal.versions.to_a.tap(&:shift)
+          actual = Version.subsequent(animal.versions.first)
+          expect(actual).to(eq(expected))
+        end
+      end
+    end
+
+    describe ".preceding" do
+      context("given a timestamp") do
+        it("return all versions that were created before the timestamp") do
+          animal = Animal.create
+          2.times { animal.update_attributes(name: FFaker::Lorem.word) }
+          value = Version.preceding(5.seconds.from_now, true)
+          expect(value).to(eq(animal.versions.reverse))
+          expect(value.to_sql).to(match(/ORDER BY #{Version.arel_table[:created_at].desc.to_sql}/))
+        end
+      end
+
+      context("given a Version") do
+        it("grab the timestamp from the version and use that as the value") do
+          animal = Animal.create
+          2.times { animal.update_attributes(name: FFaker::Lorem.word) }
+          expected = animal.versions.to_a.tap(&:pop).reverse
+          actual = Version.preceding(animal.versions.last)
+          expect(actual).to(eq(expected))
+        end
+      end
+    end
+
+    describe "#object_changes" do
+      context "YAML serializer" do
+        it "store out as a plain hash" do
+          expect(PaperTrail.serializer).to eq(PaperTrail::Serializers::YAML)
+          widget = Widget.create!(name: "Dashboard")
+          yaml = widget.versions.last.object_changes
+          expect(yaml).not_to match(/HashWithIndifferentAccess/)
+          parsed = YAML.safe_load(yaml, [Time])
+          expect(parsed).to be_a(::Hash)
+          expect(parsed.keys).to match_array(%w(created_at id name updated_at))
+        end
+      end
+
+      context "JSON serializer" do
         before(:all) { PaperTrail.serializer = PaperTrail::Serializers::JSON }
 
         it "store out as a plain hash" do
-          expect(value =~ /HashWithIndifferentAccess/).to be_nil
+          widget = Widget.create!(name: "Dashboard")
+          json = widget.versions.last.object_changes
+          expect(json).not_to match(/HashWithIndifferentAccess/)
+          parsed = JSON.parse(json)
+          expect(parsed).to be_a(::Hash)
+          expect(parsed.keys).to match_array(%w(created_at id name updated_at))
         end
 
         after(:all) { PaperTrail.serializer = PaperTrail::Serializers::YAML }
@@ -32,7 +119,7 @@ module PaperTrail
         end
       end
 
-      context "has previous version", versioning: true do
+      context "has previous version" do
         it "returns name of whodunnit" do
           name = FFaker::Name.name
           widget = Widget.create!(name: FFaker::Name.name)
@@ -50,7 +137,7 @@ module PaperTrail
         end
       end
 
-      context "has previous version", versioning: true do
+      context "has previous version" do
         it "returns a PaperTrail::Version" do
           name = FFaker::Name.name
           widget = Widget.create!(name: FFaker::Name.name)
@@ -124,7 +211,7 @@ module PaperTrail
             end
           end
 
-          describe "#where_object", versioning: true do
+          describe "#where_object" do
             let(:widget) { Widget.new }
             let(:name) { FFaker::Name.first_name }
             let(:int) { rand(10) + 1 }
@@ -183,7 +270,7 @@ module PaperTrail
             end
           end
 
-          describe "#where_object_changes", versioning: true do
+          describe "#where_object_changes" do
             let(:widget) { Widget.new }
             let(:name) { FFaker::Name.first_name }
             let(:int) { rand(5) + 2 }
