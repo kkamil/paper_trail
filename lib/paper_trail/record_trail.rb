@@ -46,6 +46,16 @@ module PaperTrail
       end]
     end
 
+    def attributes_after_change
+      Hash[@record.attributes.map do |k, v|
+        if @record.class.column_names.include?(k)
+          [k, attribute_in_current_version(k)]
+        else
+          [k, v]
+        end
+      end]
+    end
+
     def changed_and_not_ignored
       ignore = @record.paper_trail_options[:ignore].dup
       # Remove Hash arguments and then evaluate whether the attributes (the
@@ -193,6 +203,11 @@ module PaperTrail
       attrs
     end
 
+    def object_current_attrs_for_paper_trail
+      attrs = attributes_after_change.except(*@record.paper_trail_options[:skip])
+      AttributeSerializers::ObjectAttribute.new(@record.class).serialize(attrs)
+      attrs
+    end
     # Returns who put `@record` into its current state.
     def originator
       (source_version || versions.last).try(:whodunnit)
@@ -219,6 +234,7 @@ module PaperTrail
     def data_for_create
       data = {
         event: @record.paper_trail_event || "create",
+        object: current_recordable_object,
         whodunnit: PaperTrail.whodunnit
       }
       if @record.respond_to?(:updated_at)
@@ -252,7 +268,7 @@ module PaperTrail
         item_id: @record.id,
         item_type: @record.class.base_class.name,
         event: @record.paper_trail_event || "destroy",
-        object: recordable_object,
+        object: current_recordable_object,
         whodunnit: PaperTrail.whodunnit
       }
       add_transaction_id_to(data)
@@ -288,7 +304,7 @@ module PaperTrail
     def data_for_update
       data = {
         event: @record.paper_trail_event || "update",
-        object: recordable_object,
+        object: current_recordable_object,
         whodunnit: PaperTrail.whodunnit
       }
       if @record.respond_to?(:updated_at)
@@ -315,6 +331,13 @@ module PaperTrail
       end
     end
 
+    def current_recordable_object
+      if @record.class.paper_trail.version_class.object_col_is_json?
+        object_current_attrs_for_paper_trail
+      else
+        PaperTrail.serializer.dump(object_current_attrs_for_paper_trail)
+      end
+    end
     # Returns an object which can be assigned to the `object_changes`
     # attribute of a nascent version record. If the `object_changes` column is
     # a postgres `json` column, then a hash can be used in the assignment,
@@ -479,6 +502,11 @@ module PaperTrail
         # attribute_was is no longer private.
         @record.send(:attribute_was, attr_name.to_s)
       end
+    end
+
+    # @api private
+    def attribute_in_current_version(attr_name)
+      @record.send(attr_name.to_s)
     end
 
     # @api private
