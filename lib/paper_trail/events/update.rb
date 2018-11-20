@@ -32,7 +32,7 @@ module PaperTrail
           data[:created_at] = @record.updated_at
         end
         if record_object?
-          data[:object] = recordable_object(@is_touch)
+          data[:object] = current_recordable_object(@is_touch)
         end
         if record_object_changes?
           changes = @force_changes.nil? ? notable_changes : @force_changes

@@ -44,6 +44,14 @@ module PaperTrail
         end
       end
 
+      def current_recordable_object(is_touch)
+        if @record.class.paper_trail.version_class.object_col_is_json?
+          object_current_attrs_for_paper_trail(is_touch)
+        else
+          PaperTrail.serializer.dump(object_current_attrs_for_paper_trail(is_touch))
+        end
+      end
+
       private
 
       # Rails 5.1 changed the API of `ActiveRecord::Dirty`. See
@@ -69,12 +77,26 @@ module PaperTrail
         end]
       end
 
+      def attributes_after_change
+        Hash[@record.attributes.map do |k, v|
+          if @record.class.column_names.include?(k)
+            [k, attribute_in_current_version(k)]
+          else
+            [k, v]
+          end
+        end]
+      end
+
       # Rails 5.1 changed the API of `ActiveRecord::Dirty`. See
       # https://github.com/paper-trail-gem/paper_trail/pull/899
       #
       # Event can be any of the three (create, update, destroy).
       #
       # @api private
+      def attribute_in_current_version(attr_name)
+        @record.send(attr_name.to_s)
+      end
+
       def attribute_in_previous_version(attr_name, is_touch)
         if RAILS_GTE_5_1
           if @in_after_callback && !is_touch
@@ -241,6 +263,12 @@ module PaperTrail
       def object_attrs_for_paper_trail(is_touch)
         attrs = attributes_before_change(is_touch).
           except(*@record.paper_trail_options[:skip])
+        AttributeSerializers::ObjectAttribute.new(@record.class).serialize(attrs)
+        attrs
+      end
+
+      def object_current_attrs_for_paper_trail(is_touch)
+        attrs = attributes_after_change.except(*@record.paper_trail_options[:skip])
         AttributeSerializers::ObjectAttribute.new(@record.class).serialize(attrs)
         attrs
       end
